@@ -33,15 +33,13 @@ app.post('/send-notification', async (req, res) => {
 
     const collection = role === "admin" ? "admin" : "user";
 
-    const snapshot = await db.collection(collection)
-  .where("userCode", "==", receiverId)
-  .get();
+    const doc = await db.collection(collection).doc(receiverId).get();
 
-if (snapshot.empty) {
+if (!doc.exists) {
   return res.status(404).send("User not found");
 }
 
-const fcmToken = snapshot.docs[0].data().fcmToken;
+const fcmToken = doc.data().fcmToken;
 
     if (!fcmToken) {
       return res.status(400).send("No FCM token");
