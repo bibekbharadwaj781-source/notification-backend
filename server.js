@@ -3,14 +3,13 @@ require('dotenv').config();
 const express = require('express');
 const admin = require('firebase-admin');
 const cors = require('cors');
-const bodyParser = require('body-parser');
 
 const app = express();
 
 app.use(cors());
-app.use(bodyParser.json());
+app.use(express.json());
 
-// ✅ Firebase config (Render env variables)
+// ✅ Firebase init (Render env)
 admin.initializeApp({
   credential: admin.credential.cert({
     projectId: process.env.FIREBASE_PROJECT_ID,
@@ -21,45 +20,90 @@ admin.initializeApp({
 
 const db = admin.firestore();
 
-// ✅ Test route
+// ✅ Health check
 app.get('/', (req, res) => {
   res.send('Server is running');
 });
 
-// ✅ Notification route
+// ✅ Notification route (bidirectional)
 app.post('/send-notification', async (req, res) => {
   try {
-    const { receiverId, role } = req.body;
+    const { role, receiverId } = req.body;
 
-    const collection = role === "admin" ? "admin" : "user";
-
-    // 🔍 DEBUG LOGS (VERY IMPORTANT)
     console.log("====================================");
     console.log("Incoming Request");
-    console.log("ReceiverId:", receiverId);
     console.log("Role:", role);
-    console.log("Collection:", collection);
+    console.log("ReceiverId:", receiverId);
 
-    // 🔍 Fetch document
-    const doc = await db.collection(collection).doc(receiverId).get();
+    let fcmToken = null;
 
-    if (!doc.exists) {
-      console.log("❌ Document NOT found in Firestore");
-      return res.status(404).send("User not found");
+    // ================================
+    // 🔥 CASE 1: USER → ADMIN
+    // ================================
+    if (role === "admin") {
+      console.log("Flow: USER → ADMIN");
+
+      // dynamically fetch admin (no ID exposure)
+      const adminSnap = await db.collection("admin")
+        .where("role", "==", "admin")
+        .limit(1)
+        .get();
+
+      if (adminSnap.empty) {
+        console.log("❌ Admin not found");
+        return res.status(404).send("Admin not found");
+      }
+
+      const adminDoc = adminSnap.docs[0];
+      const adminData = adminDoc.data();
+
+      fcmToken = adminData.fcmToken;
+
+      console.log("✅ Admin found:", adminDoc.id);
     }
 
-    const data = doc.data();
-    const fcmToken = data.fcmToken;
+    // ================================
+    // 🔥 CASE 2: ADMIN → USER
+    // ================================
+    else if (role === "user") {
+      console.log("Flow: ADMIN → USER");
 
-    console.log("✅ Document found");
-    console.log("FCM Token:", fcmToken);
+      if (!receiverId) {
+        console.log("❌ Missing receiverId for user");
+        return res.status(400).send("receiverId required");
+      }
 
+      const userDoc = await db.collection("user").doc(receiverId).get();
+
+      if (!userDoc.exists) {
+        console.log("❌ User not found:", receiverId);
+        return res.status(404).send("User not found");
+      }
+
+      const userData = userDoc.data();
+      fcmToken = userData.fcmToken;
+
+      console.log("✅ User found:", receiverId);
+    }
+
+    else {
+      console.log("❌ Invalid role");
+      return res.status(400).send("Invalid role");
+    }
+
+    // ================================
+    // 🔥 TOKEN CHECK
+    // ================================
     if (!fcmToken) {
       console.log("❌ FCM token missing");
       return res.status(400).send("No FCM token");
     }
 
-    // ✅ Create message
+    console.log("📱 FCM Token:", fcmToken);
+
+    // ================================
+    // 🔥 SEND NOTIFICATION
+    // ================================
     const message = {
       token: fcmToken,
       notification: {
@@ -74,10 +118,9 @@ app.post('/send-notification', async (req, res) => {
       },
     };
 
-    // ✅ Send notification
     const response = await admin.messaging().send(message);
 
-    console.log("✅ Notification sent successfully");
+    console.log("✅ Notification sent");
     console.log("Response:", response);
     console.log("====================================");
 
