@@ -9,7 +9,10 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ✅ Firebase init (Render env)
+// =====================================
+// ✅ FIREBASE INITIALIZATION
+// =====================================
+
 admin.initializeApp({
   credential: admin.credential.cert({
     projectId: process.env.FIREBASE_PROJECT_ID,
@@ -20,31 +23,45 @@ admin.initializeApp({
 
 const db = admin.firestore();
 
-// ✅ Health check
+// =====================================
+// ✅ HEALTH CHECK
+// =====================================
+
 app.get('/', (req, res) => {
   res.send('Server is running');
 });
 
-// ✅ Notification route (bidirectional)
+// =====================================
+// ✅ SEND NOTIFICATION ROUTE
+// =====================================
+
 app.post('/send-notification', async (req, res) => {
   try {
-    const { role, receiverId } = req.body;
+    const {
+      role,
+      receiverId,
+    } = req.body;
 
     console.log("====================================");
-    console.log("Incoming Request");
+    console.log("📨 Incoming Notification Request");
     console.log("Role:", role);
     console.log("ReceiverId:", receiverId);
 
     let fcmToken = null;
+    let targetDocId = null;
+    let targetCollection = null;
 
-    // ================================
-    // 🔥 CASE 1: USER → ADMIN
-    // ================================
-    if (role === "admin") {
-      console.log("Flow: USER → ADMIN");
+    // =====================================
+    // ✅ USER → ADMIN
+    // role = "user"
+    // =====================================
 
-      // dynamically fetch admin (no ID exposure)
-      const adminSnap = await db.collection("admin")
+    if (role === "user") {
+
+      console.log("🔄 Flow: USER → ADMIN");
+
+      const adminSnap = await db
+        .collection("admin")
         .where("role", "==", "admin")
         .limit(1)
         .get();
@@ -59,82 +76,153 @@ app.post('/send-notification', async (req, res) => {
 
       fcmToken = adminData.fcmToken;
 
-      console.log("✅ Admin found:", adminDoc.id);
+      targetDocId = adminDoc.id;
+      targetCollection = "admin";
+
+      console.log("✅ Admin Found:", adminDoc.id);
     }
 
-    // ================================
-    // 🔥 CASE 2: ADMIN → USER
-    // ================================
-    else if (role === "user") {
-      console.log("Flow: ADMIN → USER");
+    // =====================================
+    // ✅ ADMIN → USER
+    // role = "admin"
+    // =====================================
+
+    else if (role === "admin") {
+
+      console.log("🔄 Flow: ADMIN → USER");
 
       if (!receiverId) {
-        console.log("❌ Missing receiverId for user");
+        console.log("❌ receiverId missing");
         return res.status(400).send("receiverId required");
       }
 
-      const userDoc = await db.collection("user").doc(receiverId).get();
+      const userDoc = await db
+        .collection("user")
+        .doc(receiverId)
+        .get();
 
       if (!userDoc.exists) {
-        console.log("❌ User not found:", receiverId);
+        console.log("❌ User not found");
         return res.status(404).send("User not found");
       }
 
       const userData = userDoc.data();
+
       fcmToken = userData.fcmToken;
 
-      console.log("✅ User found:", receiverId);
+      targetDocId = receiverId;
+      targetCollection = "user";
+
+      console.log("✅ User Found:", receiverId);
     }
+
+    // =====================================
+    // ❌ INVALID ROLE
+    // =====================================
 
     else {
       console.log("❌ Invalid role");
       return res.status(400).send("Invalid role");
     }
 
-    // ================================
-    // 🔥 TOKEN CHECK
-    // ================================
+    // =====================================
+    // ❌ TOKEN CHECK
+    // =====================================
+
     if (!fcmToken) {
-      console.log("❌ FCM token missing");
+      console.log("❌ No FCM token found");
       return res.status(400).send("No FCM token");
     }
 
     console.log("📱 FCM Token:", fcmToken);
 
-    // ================================
-    // 🔥 SEND NOTIFICATION
-    // ================================
+    // =====================================
+    // ✅ MESSAGE PAYLOAD
+    // =====================================
+
     const message = {
       token: fcmToken,
+
       notification: {
         title: "Lion Gate",
         body: "You may have new messages",
       },
+
+      data: {
+        userCode: receiverId || "",
+        chatId: receiverId || "",
+      },
+
       android: {
         priority: "high",
+
         notification: {
           channelId: "high_importance_channel",
+          priority: "high",
+          sound: "default",
         },
       },
     };
 
-    const response = await admin.messaging().send(message);
+    // =====================================
+    // ✅ SEND NOTIFICATION
+    // =====================================
 
-    console.log("✅ Notification sent");
-    console.log("Response:", response);
-    console.log("====================================");
+    try {
 
-    res.send("Success");
+      const response = await admin
+        .messaging()
+        .send(message);
+
+      console.log("✅ Notification Sent");
+      console.log("📨 Firebase Response:", response);
+      console.log("====================================");
+
+      return res.send("Success");
+
+    } catch (err) {
+
+      console.error("❌ Firebase Messaging Error:", err);
+
+      // =====================================
+      // ✅ REMOVE INVALID TOKEN
+      // =====================================
+
+      if (
+        err.code === 'messaging/registration-token-not-registered'
+      ) {
+
+        console.log("🗑 Removing invalid FCM token");
+
+        await db
+          .collection(targetCollection)
+          .doc(targetDocId)
+          .update({
+            fcmToken: admin.firestore.FieldValue.delete(),
+          });
+      }
+
+      return res
+        .status(500)
+        .send("Notification sending failed");
+    }
 
   } catch (error) {
-    console.error("❌ ERROR:", error);
-    res.status(500).send("Error sending notification");
+
+    console.error("❌ SERVER ERROR:", error);
+
+    return res
+      .status(500)
+      .send("Internal server error");
   }
 });
 
-// ✅ Render port
+// =====================================
+// ✅ START SERVER
+// =====================================
+
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
