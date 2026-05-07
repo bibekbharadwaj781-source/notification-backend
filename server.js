@@ -50,6 +50,7 @@ app.post('/send-notification', async (req, res) => {
     let fcmToken = null;
     let targetDocId = null;
     let targetCollection = null;
+    let isAdminReceiver = false;
 
     // =====================================
     // ✅ USER → ADMIN
@@ -60,9 +61,9 @@ app.post('/send-notification', async (req, res) => {
 
       console.log("🔄 Flow: USER → ADMIN");
 
+      // Fix: Get admin document directly or query properly
       const adminSnap = await db
         .collection("admin")
-        .where("role", "==", "admin")
         .limit(1)
         .get();
 
@@ -75,9 +76,9 @@ app.post('/send-notification', async (req, res) => {
       const adminData = adminDoc.data();
 
       fcmToken = adminData.fcmToken;
-
       targetDocId = adminDoc.id;
       targetCollection = "admin";
+      isAdminReceiver = true; // Receiver is admin
 
       console.log("✅ Admin Found:", adminDoc.id);
     }
@@ -109,9 +110,9 @@ app.post('/send-notification', async (req, res) => {
       const userData = userDoc.data();
 
       fcmToken = userData.fcmToken;
-
       targetDocId = receiverId;
       targetCollection = "user";
+      isAdminReceiver = false; // Receiver is user
 
       console.log("✅ User Found:", receiverId);
     }
@@ -134,10 +135,10 @@ app.post('/send-notification', async (req, res) => {
       return res.status(400).send("No FCM token");
     }
 
-    console.log("📱 FCM Token:", fcmToken);
+    console.log("📱 FCM Token:", fcmToken.substring(0, 20) + "...");
 
     // =====================================
-    // ✅ MESSAGE PAYLOAD
+    // ✅ MESSAGE PAYLOAD (UPDATED with isAdmin)
     // =====================================
 
     const message = {
@@ -151,6 +152,7 @@ app.post('/send-notification', async (req, res) => {
       data: {
         userCode: receiverId || "",
         chatId: receiverId || "",
+        isAdmin: isAdminReceiver ? "true" : "false", // Add this field
       },
 
       android: {
@@ -160,6 +162,16 @@ app.post('/send-notification', async (req, res) => {
           channelId: "high_importance_channel",
           priority: "high",
           sound: "default",
+          clickAction: "FLUTTER_NOTIFICATION_CLICK",
+        },
+      },
+
+      apns: {
+        payload: {
+          aps: {
+            sound: "default",
+            contentAvailable: true,
+          },
         },
       },
     };
@@ -178,7 +190,11 @@ app.post('/send-notification', async (req, res) => {
       console.log("📨 Firebase Response:", response);
       console.log("====================================");
 
-      return res.send("Success");
+      return res.status(200).json({ 
+        success: true, 
+        messageId: response,
+        receiverIsAdmin: isAdminReceiver 
+      });
 
     } catch (err) {
 
@@ -188,9 +204,8 @@ app.post('/send-notification', async (req, res) => {
       // ✅ REMOVE INVALID TOKEN
       // =====================================
 
-      if (
-        err.code === 'messaging/registration-token-not-registered'
-      ) {
+      if (err.code === 'messaging/registration-token-not-registered' ||
+          err.code === 'messaging/invalid-registration-token') {
 
         console.log("🗑 Removing invalid FCM token");
 
@@ -204,7 +219,11 @@ app.post('/send-notification', async (req, res) => {
 
       return res
         .status(500)
-        .send("Notification sending failed");
+        .json({ 
+          success: false, 
+          error: err.code,
+          message: "Notification sending failed" 
+        });
     }
 
   } catch (error) {
@@ -213,7 +232,11 @@ app.post('/send-notification', async (req, res) => {
 
     return res
       .status(500)
-      .send("Internal server error");
+      .json({ 
+        success: false, 
+        error: error.message,
+        message: "Internal server error" 
+      });
   }
 });
 
