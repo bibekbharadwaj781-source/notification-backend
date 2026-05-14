@@ -100,7 +100,7 @@ app.post('/send-notification', async (req, res) => {
 
         notification: {
           title: "Lion Gate",
-          body: "New message from user",
+          body: "New message from User",
         },
 
         data: {
@@ -203,7 +203,7 @@ app.post('/send-notification', async (req, res) => {
 
         notification: {
           title: "Lion Gate",
-          body: "New message from admin",
+          body: "New message from Bibek",
         },
 
         data: {
