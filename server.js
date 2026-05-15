@@ -52,6 +52,7 @@ app.post('/send-notification', async (req, res) => {
     console.log("ReceiverId:", receiverId);
 
     let fcmToken = null;
+    let targetDoc = null;
 
     // =====================================================
     // ✅ USER → ADMIN
@@ -78,10 +79,8 @@ app.post('/send-notification', async (req, res) => {
         });
       }
 
-      const adminDoc = adminSnapshot.docs[0];
-      const adminData = adminDoc.data();
-
-      fcmToken = adminData.fcmToken;
+       targetDoc = adminSnapshot.docs[0];
+       fcmToken = targetDoc.data().fcmToken;
 
       if (!fcmToken) {
         console.log("❌ Admin has no FCM token");
@@ -111,6 +110,8 @@ app.post('/send-notification', async (req, res) => {
           role: "admin",
 
           sender: "user",
+          userCode: receiverId,
+          isAdmin: "false",
         },
 
         android: {
@@ -214,6 +215,9 @@ app.post('/send-notification', async (req, res) => {
           role: "user",
 
           sender: "admin",
+          userCode:receiverId,
+          isAdmin:"false",
+          adminCode:"",
         },
 
         android: {
